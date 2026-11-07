@@ -1,0 +1,28 @@
+<div class="auth-page">
+    <form class="auth-card" [formGroup]="form" (ngSubmit)="submit()">
+      <h1>Create your account</h1>
+      <p class="sub">Takes less than a minute</p>
+  
+      <mat-form-field appearance="outline">
+        <mat-label>Display name</mat-label>
+        <input matInput formControlName="name" />
+      </mat-form-field>
+  
+      <mat-form-field appearance="outline">
+        <mat-label>Email</mat-label>
+        <input matInput type="email" formControlName="email" />
+      </mat-form-field>
+  
+      <mat-form-field appearance="outline">
+        <mat-label>Password</mat-label>
+        <input matInput type="password" formControlName="password" />
+      </mat-form-field>
+  
+      @if (error()) {
+        <p class="error">{{ error() }}</p>
+      }
+  
+      <button mat-flat-button type="submit" [disabled]="form.invalid || loading()">Sign up</button>
+      <a routerLink="/login" class="link">Already have an account? Log in</a>
+    </form>
+  </div>

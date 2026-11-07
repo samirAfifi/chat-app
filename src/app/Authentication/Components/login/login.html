@@ -1,0 +1,37 @@
+<div class="auth-page">
+  <form class="auth-card" [formGroup]="form" (ngSubmit)="submit()">
+    <div class="logo">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 12a8 8 0 0 1-11.5 7.2L3 21l1.8-6.2A8 8 0 1 1 21 12z" />
+      </svg>
+    </div>
+
+    <h1>Welcome back</h1>
+    <p class="sub">Log in to continue chatting</p>
+
+    <mat-form-field appearance="outline">
+      <mat-label>Email</mat-label>
+      <input matInput type="email" formControlName="email" autocomplete="email" />
+    </mat-form-field>
+
+    <mat-form-field appearance="outline">
+      <mat-label>Password</mat-label>
+      <input matInput type="password" formControlName="password" autocomplete="current-password" />
+    </mat-form-field>
+
+    @if (error()) {
+      <p class="error">{{ error() }}</p>
+    }
+
+    <button mat-flat-button type="submit" [disabled]="form.invalid || loading()">
+      {{ loading() ? 'Logging in…' : 'Log in' }}
+    </button>
+
+    <div class="divider">or</div>
+
+    <button mat-stroked-button type="button" (click)="google()">Continue with Google</button>
+
+    <a routerLink="/register" class="link">Don't have an account? Create one</a>
+  </form>
+</div>
