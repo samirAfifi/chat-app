@@ -1,59 +1,58 @@
-# ChatApp
+# Real-time Chat App
 
-This project was generated using [Angular CLI](https://github.com/angular/angular-cli) version 21.2.29.
+One-to-one messaging app built with **Angular 21** and **Firebase**. Messages arrive live through Cloud Firestore streams; no page refresh needed.
 
-## Development server
+## Features
 
-To start a local development server, run:
+- **Authentication:** email/password register and login, plus Google sign-in, with Firebase Authentication
+- **Route guards:** the chat page is protected; signed-out users are redirected to login
+- **Clear auth errors:** Firebase error codes mapped to friendly messages
+- **Live messaging:** one-to-one chats streamed from Firestore with RxJS (`collectionData`)
+- **Contact list:** online status, search, and last-message preview with time
+- **Modern Angular:** standalone components, Signals (`signal`, `computed`), new control flow (`@if`, `@for`), lazy-loaded routes, SSR
 
-```bash
-ng serve
+## Tech stack
+
+| Area | Tools |
+| --- | --- |
+| Framework | Angular 21, TypeScript, RxJS |
+| UI | Angular Material, SCSS |
+| Backend | Firebase Authentication, Cloud Firestore (`@angular/fire`) |
+| Rendering | Angular SSR (Express) |
+| Testing | Vitest |
+
+## Data model
+
+```
+users/{uid}                    displayName, email, photoURL, isOnline
+chats/{uidA_uidB}              members[], lastMessage, lastSenderId, updatedAt
+chats/{uidA_uidB}/messages/{id}  senderId, text, createdAt
 ```
 
-Once the server is running, open your browser and navigate to `http://localhost:4200/`. The application will automatically reload whenever you modify any of the source files.
+The chat id is both user ids sorted and joined, so A→B and B→A share one conversation.
 
-## Code scaffolding
+## Project structure
 
-Angular CLI includes powerful code scaffolding tools. To generate a new component, run:
-
-```bash
-ng generate component component-name
+```
+src/app/
+├── Authentication/
+│   ├── Components/   login, register
+│   ├── guards/       authGuard
+│   └── services/     AuthService
+└── Chat/
+    ├── Components/   chat (contacts + conversation)
+    └── services/     ChatService (Firestore queries and send)
 ```
 
-For a complete list of available schematics (such as `components`, `directives`, or `pipes`), run:
+## Run locally
 
 ```bash
-ng generate --help
+npm install
+npm start
 ```
 
-## Building
+Then open `http://localhost:4200/`. The Firebase config lives in `src/environments/environment.development.ts`.
 
-To build the project run:
+## Author
 
-```bash
-ng build
-```
-
-This will compile your project and store the build artifacts in the `dist/` directory. By default, the production build optimizes your application for performance and speed.
-
-## Running unit tests
-
-To execute unit tests with the [Vitest](https://vitest.dev/) test runner, use the following command:
-
-```bash
-ng test
-```
-
-## Running end-to-end tests
-
-For end-to-end (e2e) testing, run:
-
-```bash
-ng e2e
-```
-
-Angular CLI does not come with an end-to-end testing framework by default. You can choose one that suits your needs.
-
-## Additional Resources
-
-For more information on using the Angular CLI, including detailed command references, visit the [Angular CLI Overview and Command Reference](https://angular.dev/tools/cli) page.
+**Samir Afifi**, Angular Frontend Developer: [LinkedIn](https://www.linkedin.com/in/samir-afifi) · [GitHub](https://github.com/samirAfifi)
