@@ -14,6 +14,11 @@ export const routes: Routes = [
     loadComponent: () =>
       import('./Authentication/Components/register/register').then((m) => m.Register),
   },
-  { path: '', pathMatch: 'full', redirectTo: 'login' },
+  {
+    path: 'chat',
+    canActivate: [authGuard],
+    loadComponent: () => import('./Chat/Components/chat/chat').then((m) => m.Chat),
+  },
+  { path: '', pathMatch: 'full', redirectTo: 'chat' },
   { path: '**', redirectTo: 'login' },
 ];

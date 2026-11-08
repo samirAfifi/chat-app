@@ -1,0 +1,143 @@
+<div class="chat-shell" [class.has-selection]="selected()">
+  <!-- Sidebar: contacts -->
+  <aside class="chat-sidebar">
+    <header class="sidebar-header">
+      <div class="me">
+        <div class="avatar">
+          @if (me()?.photoURL) {
+            <img [src]="me()!.photoURL" alt="" referrerpolicy="no-referrer" />
+          } @else {
+            {{ initials(me()?.displayName) }}
+          }
+        </div>
+        <div class="me-text">
+          <strong>{{ me()?.displayName || 'Me' }}</strong>
+          <span>{{ me()?.email }}</span>
+        </div>
+      </div>
+      <button mat-icon-button (click)="logout()" aria-label="Log out" title="Log out">
+        <mat-icon>logout</mat-icon>
+      </button>
+    </header>
+
+    @if (loadError()) {
+      <div class="load-error" role="alert">
+        <span>{{ loadError() }}</span>
+        <button mat-icon-button (click)="loadError.set('')" aria-label="Dismiss">
+          <mat-icon>close</mat-icon>
+        </button>
+      </div>
+    }
+
+    <div class="search">
+      <mat-icon>search</mat-icon>
+      <input
+        type="search"
+        placeholder="Search people"
+        [value]="search()"
+        (input)="search.set($any($event.target).value)"
+      />
+    </div>
+
+    <ul class="contact-list">
+      @for (c of contacts(); track c.uid) {
+        <li>
+          <button
+            class="contact"
+            [class.active]="c.uid === selectedUid()"
+            (click)="open(c.uid)"
+          >
+            <div class="avatar">
+              @if (c.photoURL) {
+                <img [src]="c.photoURL" alt="" referrerpolicy="no-referrer" />
+              } @else {
+                {{ initials(c.displayName) }}
+              }
+              @if (c.isOnline) {
+                <span class="dot"></span>
+              }
+            </div>
+            <div class="contact-text">
+              <div class="row">
+                <strong>{{ c.displayName }}</strong>
+                @if (c.chat?.updatedAt) {
+                  <time>{{ c.chat!.updatedAt!.toDate() | date: 'shortTime' }}</time>
+                }
+              </div>
+              <span class="preview">
+                @if (c.chat?.lastMessage) {
+                  @if (c.chat!.lastSenderId === me()?.uid) {
+                    You:
+                  }
+                  {{ c.chat!.lastMessage }}
+                } @else {
+                  Start a conversation
+                }
+              </span>
+            </div>
+          </button>
+        </li>
+      } @empty {
+        <li class="empty">
+          {{ search() ? 'No one matches your search' : 'No other users yet' }}
+        </li>
+      }
+    </ul>
+  </aside>
+
+  <!-- Conversation -->
+  <section class="chat-main">
+    @if (selected(); as other) {
+      <header class="conv-header">
+        <button mat-icon-button class="back" (click)="back()" aria-label="Back">
+          <mat-icon>arrow_back</mat-icon>
+        </button>
+        <div class="avatar">
+          @if (other.photoURL) {
+            <img [src]="other.photoURL" alt="" referrerpolicy="no-referrer" />
+          } @else {
+            {{ initials(other.displayName) }}
+          }
+        </div>
+        <div class="conv-title">
+          <strong>{{ other.displayName }}</strong>
+          <span>{{ other.isOnline ? 'Online' : 'Offline' }}</span>
+        </div>
+      </header>
+
+      <div class="messages" #scroller>
+        @for (m of messages(); track m.id) {
+          <div class="bubble" [class.mine]="m.senderId === me()?.uid">
+            <p>{{ m.text }}</p>
+            <time>{{ m.createdAt ? (m.createdAt.toDate() | date: 'shortTime') : 'sending…' }}</time>
+          </div>
+        } @empty {
+          <div class="no-messages">Say hi to {{ other.displayName }} 👋</div>
+        }
+      </div>
+
+      <form class="composer" (submit)="$event.preventDefault(); send()">
+        <textarea
+          rows="1"
+          placeholder="Type a message"
+          [value]="draft()"
+          (input)="draft.set($any($event.target).value)"
+          (keydown)="onKeydown($event)"
+        ></textarea>
+        <button
+          mat-icon-button
+          type="submit"
+          [disabled]="!draft().trim() || sending()"
+          aria-label="Send"
+        >
+          <mat-icon>send</mat-icon>
+        </button>
+      </form>
+    } @else {
+      <div class="placeholder">
+        <mat-icon>forum</mat-icon>
+        <p>Pick someone from the list to start chatting</p>
+      </div>
+    }
+  </section>
+</div>

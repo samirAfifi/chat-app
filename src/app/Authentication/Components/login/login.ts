@@ -4,7 +4,7 @@ import { Router, RouterLink } from '@angular/router';
 import { MatButtonModule } from '@angular/material/button';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
-import { AuthService } from '../../services/auth';
+import { AuthService, authErrorMessage } from '../../services/auth';
 
 
 @Component({
@@ -27,15 +27,19 @@ export class Login {
   });
 
   async submit() {
-    if (this.form.invalid) return;
+    if (this.form.invalid) {
+      this.form.markAllAsTouched(); // show the field errors instead of doing nothing
+      return;
+    }
     this.loading.set(true);
     this.error.set('');
     try {
       const { email, password } = this.form.getRawValue();
       await this.auth.login(email, password);
-      this.router.navigate(['/chat']);
-    } catch {
-      this.error.set('الإيميل أو الباسورد غلط');
+      await this.router.navigate(['/chat']);
+    } catch (e) {
+      console.error('[Login] email login failed', e);
+      this.error.set(authErrorMessage(e));
     } finally {
       this.loading.set(false);
     }
@@ -45,9 +49,10 @@ export class Login {
     this.error.set('');
     try {
       await this.auth.loginWithGoogle();
-      this.router.navigate(['/chat']);
-    } catch {
-      this.error.set('تعذّر تسجيل الدخول بـ Google');
+      await this.router.navigate(['/chat']);
+    } catch (e) {
+      console.error('[Login] Google login failed', e);
+      this.error.set(authErrorMessage(e));
     }
   }
 }
