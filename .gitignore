@@ -45,3 +45,6 @@ Thumbs.db
 
 # Local AI assistant settings
 .claude/
+
+# Firebase CLI
+.firebase/

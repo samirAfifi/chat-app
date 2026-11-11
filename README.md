@@ -2,6 +2,8 @@
 
 One-to-one messaging app built with **Angular 21** and **Firebase**. Messages, read receipts, typing status and reactions update live through Cloud Firestore streams, with no page refresh and no custom backend.
 
+**🔗 Live demo: [chat-app-a81b3.web.app](https://chat-app-a81b3.web.app)**. Sign up with two accounts (one in a private window) to chat between them.
+
 <!-- Add a screenshot or GIF here, e.g. ![Chat screen](docs/screenshot.png) -->
 
 ## Features
@@ -87,6 +89,15 @@ Then open `http://localhost:4200/`. To use your own Firebase project:
 3. Publish [`firestore.rules`](firestore.rules) from the Firestore **Rules** tab.
 
 To try the chat, sign in with two accounts in two browser windows (one normal, one private).
+
+## Deploy
+
+The app is deployed as a static client-side build on **Firebase Hosting** (free tier):
+
+```bash
+npx firebase-tools login   # once
+npm run deploy             # static build + firebase deploy --only hosting
+```
 
 ## Author
 
