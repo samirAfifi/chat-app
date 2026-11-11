@@ -1,0 +1,50 @@
+<div class="auth-page">
+  <form class="auth-card profile-card" [formGroup]="form" (ngSubmit)="save()">
+    <input #avatarInput type="file" accept="image/*" hidden (change)="onAvatarSelected(avatarInput)" />
+    <button
+      type="button"
+      class="avatar-picker"
+      (click)="avatarInput.click()"
+      aria-label="Change profile picture"
+    >
+      @if (preview() || photoURL()) {
+        <img [src]="preview() || photoURL()" alt="" referrerpolicy="no-referrer" />
+      } @else {
+        {{ initials(form.controls.displayName.value) }}
+      }
+      <span class="overlay"><mat-icon>photo_camera</mat-icon></span>
+    </button>
+    <p class="hint" dir="rtl">اضغط على الصورة علشان تغيّرها (لحد 5 MB)</p>
+
+    <h1>Your profile</h1>
+    <p class="sub">{{ email() }}</p>
+
+    <mat-form-field appearance="outline">
+      <mat-label>Display name</mat-label>
+      <input matInput formControlName="displayName" autocomplete="name" />
+      <mat-error>الاسم من 2 لـ 40 حرف</mat-error>
+    </mat-form-field>
+
+    @if (error()) {
+      <p class="error" dir="rtl">{{ error() }}</p>
+    }
+    @if (saved()) {
+      <p class="success" dir="rtl">اتحفظ ✓</p>
+    }
+
+    <button mat-flat-button type="submit" [disabled]="saving()">
+      {{ saving() ? 'Saving…' : 'Save changes' }}
+    </button>
+
+    <div class="actions">
+      <a mat-stroked-button routerLink="/chat">
+        <mat-icon>arrow_back</mat-icon>
+        Back to chat
+      </a>
+      <button mat-stroked-button type="button" (click)="logout()">
+        <mat-icon>logout</mat-icon>
+        Log out
+      </button>
+    </div>
+  </form>
+</div>

@@ -2,7 +2,7 @@
   <!-- Sidebar: contacts -->
   <aside class="chat-sidebar">
     <header class="sidebar-header">
-      <div class="me">
+      <button class="me" [matMenuTriggerFor]="userMenu" aria-label="Account menu">
         <div class="avatar">
           @if (me()?.photoURL) {
             <img [src]="me()!.photoURL" alt="" referrerpolicy="no-referrer" />
@@ -14,10 +14,22 @@
           <strong>{{ me()?.displayName || 'Me' }}</strong>
           <span>{{ me()?.email }}</span>
         </div>
-      </div>
-      <button mat-icon-button (click)="logout()" aria-label="Log out" title="Log out">
-        <mat-icon>logout</mat-icon>
+        <mat-icon class="chevron">expand_more</mat-icon>
       </button>
+      @if (totalUnread()) {
+        <span class="badge total" title="Unread messages">{{ totalUnread() }}</span>
+      }
+
+      <mat-menu #userMenu="matMenu" xPosition="before">
+        <a mat-menu-item routerLink="/profile">
+          <mat-icon>person</mat-icon>
+          <span>Profile</span>
+        </a>
+        <button mat-menu-item (click)="logout()">
+          <mat-icon>logout</mat-icon>
+          <span>Log out</span>
+        </button>
+      </mat-menu>
     </header>
 
     @if (loadError()) {
@@ -45,6 +57,7 @@
           <button
             class="contact"
             [class.active]="c.uid === selectedUid()"
+            [class.has-unread]="c.unread > 0"
             (click)="open(c.uid)"
           >
             <div class="avatar">
@@ -64,16 +77,25 @@
                   <time>{{ c.chat!.updatedAt!.toDate() | date: 'shortTime' }}</time>
                 }
               </div>
-              <span class="preview">
-                @if (c.chat?.lastMessage) {
-                  @if (c.chat!.lastSenderId === me()?.uid) {
-                    You:
-                  }
-                  {{ c.chat!.lastMessage }}
+              <div class="row">
+                @if (c.typing) {
+                  <span class="preview typing">typing…</span>
                 } @else {
-                  Start a conversation
+                  <span class="preview">
+                    @if (c.chat?.lastMessage) {
+                      @if (c.chat!.lastSenderId === me()?.uid) {
+                        You:
+                      }
+                      {{ c.chat!.lastMessage }}
+                    } @else {
+                      Start a conversation
+                    }
+                  </span>
                 }
-              </span>
+                @if (c.unread) {
+                  <span class="badge">{{ c.unread > 99 ? '99+' : c.unread }}</span>
+                }
+              </div>
             </div>
           </button>
         </li>
@@ -101,35 +123,116 @@
         </div>
         <div class="conv-title">
           <strong>{{ other.displayName }}</strong>
-          <span>{{ other.isOnline ? 'Online' : 'Offline' }}</span>
+          @if (otherTyping()) {
+            <span class="typing">typing…</span>
+          } @else {
+            <span>{{ other.isOnline ? 'Online' : 'Offline' }}</span>
+          }
         </div>
       </header>
 
       <div class="messages" #scroller>
         @for (m of messages(); track m.id) {
-          <div class="bubble" [class.mine]="m.senderId === me()?.uid">
-            <p>{{ m.text }}</p>
-            <time>{{ m.createdAt ? (m.createdAt.toDate() | date: 'shortTime') : 'sending…' }}</time>
+          <div
+            class="bubble"
+            [class.mine]="isMine(m)"
+            [class.media]="m.type === 'image'"
+            [class.emoji-only]="(m.type ?? 'text') === 'text' && isEmojiOnly(m.text)"
+          >
+            @switch (m.type) {
+              @case ('image') {
+                <button type="button" class="img-open" (click)="viewer.set(m.fileUrl ?? null)">
+                  <img class="attachment-img" [src]="m.fileUrl" [alt]="m.fileName" loading="lazy" />
+                </button>
+              }
+              @case ('file') {
+                <a class="attachment-file" [href]="m.fileUrl" target="_blank" rel="noopener" download>
+                  <mat-icon>description</mat-icon>
+                  <span class="file-meta">
+                    <strong>{{ m.fileName }}</strong>
+                    <small>{{ (m.fileSize ?? 0) / 1024 | number: '1.0-0' }} KB</small>
+                  </span>
+                  <mat-icon>download</mat-icon>
+                </a>
+              }
+            }
+            @if (m.text) {
+              <p>{{ m.text }}</p>
+            }
+            <div class="meta">
+              <time>{{ m.createdAt ? (m.createdAt.toDate() | date: 'shortTime') : '' }}</time>
+              @if (isMine(m)) {
+                @if (!m.createdAt) {
+                  <mat-icon class="tick" title="Sending">schedule</mat-icon>
+                } @else if (isSeen(m)) {
+                  <mat-icon class="tick seen" title="Seen">done_all</mat-icon>
+                } @else {
+                  <mat-icon class="tick" title="Sent">done</mat-icon>
+                }
+              }
+            </div>
           </div>
         } @empty {
           <div class="no-messages">Say hi to {{ other.displayName }} 👋</div>
         }
+        @if (otherTyping()) {
+          <div class="bubble typing-bubble" aria-label="typing">
+            <span></span><span></span><span></span>
+          </div>
+        }
       </div>
 
+      @if (upload(); as u) {
+        <div class="upload-bar">
+          <mat-icon>upload</mat-icon>
+          <span class="name">{{ u.name }}</span>
+          <span>{{ u.progress }}%</span>
+          <div class="track"><div class="fill" [style.width.%]="u.progress"></div></div>
+        </div>
+      }
+
       <form class="composer" (submit)="$event.preventDefault(); send()">
-        <textarea
-          rows="1"
-          placeholder="Type a message"
-          [value]="draft()"
-          (input)="draft.set($any($event.target).value)"
-          (keydown)="onKeydown($event)"
-        ></textarea>
+        @if (emojiOpen()) {
+          <app-emoji-picker (picked)="insertEmoji($event)" (closed)="emojiOpen.set(false)" />
+        }
         <button
           mat-icon-button
-          type="submit"
-          [disabled]="!draft().trim() || sending()"
-          aria-label="Send"
+          type="button"
+          data-emoji-toggle
+          [class.active]="emojiOpen()"
+          (click)="emojiOpen.set(!emojiOpen())"
+          aria-label="Emoji"
+          title="Emoji"
         >
+          <mat-icon>sentiment_satisfied</mat-icon>
+        </button>
+        <input
+          #fileInput
+          type="file"
+          accept="image/*"
+          hidden
+          (change)="onFileSelected(fileInput)"
+        />
+        <button
+          mat-icon-button
+          type="button"
+          (click)="pickFile()"
+          [disabled]="!!upload()"
+          aria-label="Send a photo"
+          title="Send a photo"
+        >
+          <mat-icon>image</mat-icon>
+        </button>
+        <textarea
+          #composerInput
+          rows="1"
+          dir="auto"
+          placeholder="Type a message"
+          [value]="draft()"
+          (input)="onInput($any($event.target).value)"
+          (keydown)="onKeydown($event)"
+        ></textarea>
+        <button mat-icon-button type="submit" [disabled]="!draft().trim()" aria-label="Send">
           <mat-icon>send</mat-icon>
         </button>
       </form>
@@ -141,3 +244,17 @@
     }
   </section>
 </div>
+
+@if (viewer(); as src) {
+  <div class="image-viewer" role="dialog" aria-label="Photo" (click)="viewer.set(null)">
+    <img [src]="src" alt="" (click)="$event.stopPropagation()" />
+    <div class="viewer-actions" (click)="$event.stopPropagation()">
+      <a mat-icon-button [href]="src" download="photo.jpg" aria-label="Download" title="Download">
+        <mat-icon>download</mat-icon>
+      </a>
+      <button mat-icon-button (click)="viewer.set(null)" aria-label="Close" title="Close">
+        <mat-icon>close</mat-icon>
+      </button>
+    </div>
+  </div>
+}

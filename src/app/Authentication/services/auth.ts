@@ -10,7 +10,9 @@ import {
   updateProfile,
   user,
 } from '@angular/fire/auth';
-import { Firestore, doc, setDoc } from '@angular/fire/firestore';
+import { Firestore, doc, docData, setDoc } from '@angular/fire/firestore';
+import { Observable } from 'rxjs';
+import { compressImage } from '../../shared/image-compress';
 
 /** Arabic message for a Firebase Auth error; falls back to showing the raw code. */
 export function authErrorMessage(e: unknown): string {
@@ -43,6 +45,20 @@ export function authErrorMessage(e: unknown): string {
   }
 }
 
+/** Rejects with code 'timeout' if the promise doesn't settle in time. */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(
+      () => reject(Object.assign(new Error('Timed out'), { code: 'timeout' })),
+      ms
+    );
+    p.then(
+      (v) => (clearTimeout(t), resolve(v)),
+      (e) => (clearTimeout(t), reject(e))
+    );
+  });
+}
+
 @Injectable({ providedIn: 'root' })
 export class AuthService {
   private auth = inject(Auth);
@@ -72,10 +88,75 @@ export class AuthService {
     if (current) {
       await Promise.race([
         this.setOnline(current.uid, false).catch(() => {}),
-        new Promise((r) => setTimeout(r, 2000)),
+        new Promise((r) => setTimeout(r, 1500)),
       ]);
     }
     await signOut(this.auth);
+  }
+
+  /**
+   * Makes sure users/{uid} exists and is complete, so the user shows up in other
+   * people's contact lists. Covers sessions restored without login and old accounts
+   * whose profile write was lost. Resolves once the server accepts the write.
+   */
+  ensureProfile() {
+    const u = this.requireUser();
+    return setDoc(
+      doc(this.firestore, 'users', u.uid),
+      {
+        uid: u.uid,
+        email: u.email,
+        isOnline: true,
+        // Only fill name/photo from Auth when present, so a name edited in the
+        // profile page is never overwritten with an empty value.
+        ...(u.displayName ? { displayName: u.displayName } : {}),
+        ...(u.photoURL ? { photoURL: u.photoURL } : {}),
+      },
+      { merge: true }
+    );
+  }
+
+  /** Best-effort presence update for the signed-in user (page load, tab close). */
+  setPresence(isOnline: boolean) {
+    const current = this.auth.currentUser;
+    if (current) this.background(this.setOnline(current.uid, isOnline));
+  }
+
+  async updateDisplayName(displayName: string) {
+    const current = this.requireUser();
+    await updateProfile(current, { displayName });
+    // Firestore applies this locally right away; don't block the UI on the server ack.
+    this.background(
+      setDoc(doc(this.firestore, 'users', current.uid), { displayName }, { merge: true })
+    );
+  }
+
+  /**
+   * Saves a new avatar without Firebase Storage: the picture is shrunk to 256px and
+   * stored as a data URL in users/{uid}.avatar (Auth's photoURL can't hold one, and a
+   * separate field means Google sign-in never overwrites the custom picture).
+   */
+  async updateAvatar(file: File): Promise<string> {
+    const current = this.requireUser();
+    const { dataUrl } = await compressImage(file, 256, 80 * 1024);
+    await withTimeout(
+      setDoc(doc(this.firestore, 'users', current.uid), { avatar: dataUrl }, { merge: true }),
+      20_000
+    );
+    return dataUrl;
+  }
+
+  /** Live users/{uid} profile document (null if it doesn't exist yet). */
+  profile$(uid: string) {
+    return docData(doc(this.firestore, 'users', uid)) as Observable<
+      { displayName?: string; email?: string; photoURL?: string | null; avatar?: string } | undefined
+    >;
+  }
+
+  private requireUser() {
+    const current = this.auth.currentUser;
+    if (!current) throw Object.assign(new Error('Not signed in'), { code: 'auth/no-current-user' });
+    return current;
   }
 
   /**

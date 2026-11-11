@@ -2,24 +2,28 @@ import { Injectable, inject } from '@angular/core';
 import {
   Firestore,
   Timestamp,
-  addDoc,
   collection,
   collectionData,
   doc,
+  increment,
   limitToLast,
   orderBy,
   query,
   serverTimestamp,
   setDoc,
   where,
+  writeBatch,
 } from '@angular/fire/firestore';
-import { Observable } from 'rxjs';
+import { Storage, getDownloadURL, ref, uploadBytesResumable } from '@angular/fire/storage';
+import { Observable, map } from 'rxjs';
 
 export interface ChatUser {
   uid: string;
   displayName: string;
   email: string | null;
   photoURL: string | null;
+  /** Custom profile picture as a data URL (set from the profile page). */
+  avatar?: string;
   isOnline: boolean;
 }
 
@@ -29,29 +33,71 @@ export interface ChatMeta {
   lastMessage?: string;
   lastSenderId?: string;
   updatedAt?: Timestamp | null;
+  /** Unread message count per member uid. */
+  unread?: Record<string, number>;
+  /** When each member last read the chat (drives the ✓✓ seen ticks). */
+  lastRead?: Record<string, Timestamp | null>;
+  /** When each member last typed; null when they stopped. */
+  typing?: Record<string, Timestamp | null>;
 }
+
+export type MessageType = 'text' | 'image' | 'file';
 
 export interface Message {
   id: string;
   senderId: string;
+  /** Missing on messages sent before attachments existed: treat as 'text'. */
+  type?: MessageType;
   text: string;
+  fileUrl?: string;
+  fileName?: string;
+  fileSize?: number;
+  contentType?: string;
   /** null while the server timestamp is still pending */
   createdAt: Timestamp | null;
 }
+
+export interface Attachment {
+  type: 'image' | 'file';
+  fileUrl: string;
+  fileName: string;
+  fileSize: number;
+  contentType: string;
+}
+
+export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 
 /** One-to-one chat id: both uids sorted, so A→B and B→A share the same chat. */
 export function chatIdFor(a: string, b: string) {
   return [a, b].sort().join('_');
 }
 
+function membersOf(a: string, b: string) {
+  return [a, b].sort();
+}
+
 @Injectable({ providedIn: 'root' })
 export class ChatService {
   private firestore = inject(Firestore);
+  private storage = inject(Storage);
 
   users$(): Observable<ChatUser[]> {
-    return collectionData(collection(this.firestore, 'users'), {
-      idField: 'uid',
-    }) as Observable<ChatUser[]>;
+    return (
+      collectionData(collection(this.firestore, 'users'), {
+        idField: 'uid',
+      }) as Observable<ChatUser[]>
+    ).pipe(
+      // Older or partial profiles may lack a name: fall back to the email's local part.
+      map((users) =>
+        users.map((u) => ({
+          ...u,
+          displayName: u.displayName || u.email?.split('@')[0] || 'User',
+          // A custom avatar (stored inline in Firestore) wins over the Google photo.
+          photoURL: u.avatar || u.photoURL || null,
+          isOnline: !!u.isOnline,
+        }))
+      )
+    );
   }
 
   /** Chats the user belongs to. Sorted on the client to avoid needing a composite index. */
@@ -69,25 +115,99 @@ export class ChatService {
     return collectionData(q, { idField: 'id' }) as Observable<Message[]>;
   }
 
-  async send(senderId: string, receiverId: string, text: string) {
+  /**
+   * Sends a text and/or attachment. The message and the chat summary are written in one
+   * batch so the contact list never shows a "last message" that doesn't exist.
+   */
+  async send(senderId: string, receiverId: string, text: string, attachment?: Attachment) {
     const body = text.trim();
-    if (!body) return;
+    if (!body && !attachment) return;
 
     const chatRef = doc(this.firestore, 'chats', chatIdFor(senderId, receiverId));
-    await setDoc(
+    const msgRef = doc(collection(chatRef, 'messages'));
+
+    const preview = attachment
+      ? attachment.type === 'image'
+        ? `📷 ${body || 'Photo'}`
+        : `📎 ${attachment.fileName}`
+      : body;
+
+    const batch = writeBatch(this.firestore);
+    batch.set(
       chatRef,
       {
-        members: [senderId, receiverId],
-        lastMessage: body,
+        members: membersOf(senderId, receiverId),
+        lastMessage: preview,
         lastSenderId: senderId,
         updatedAt: serverTimestamp(),
+        unread: { [receiverId]: increment(1) },
+        typing: { [senderId]: null },
       },
       { merge: true }
     );
-    await addDoc(collection(chatRef, 'messages'), {
+    batch.set(msgRef, {
       senderId,
+      type: attachment?.type ?? 'text',
       text: body,
+      ...(attachment ?? {}),
       createdAt: serverTimestamp(),
+    });
+    await batch.commit();
+  }
+
+  /** Clears my unread counter and records when I read the chat (for the sender's ✓✓). */
+  markRead(chatId: string, uid: string, otherUid: string) {
+    return setDoc(
+      doc(this.firestore, 'chats', chatId),
+      {
+        members: membersOf(uid, otherUid),
+        unread: { [uid]: 0 },
+        lastRead: { [uid]: serverTimestamp() },
+      },
+      { merge: true }
+    );
+  }
+
+  setTyping(chatId: string, uid: string, otherUid: string, typing: boolean) {
+    return setDoc(
+      doc(this.firestore, 'chats', chatId),
+      {
+        members: membersOf(uid, otherUid),
+        typing: { [uid]: typing ? serverTimestamp() : null },
+      },
+      { merge: true }
+    );
+  }
+
+  /** Uploads a file to chats/{chatId}/ in Storage, reporting progress 0–100. */
+  uploadAttachment(
+    chatId: string,
+    file: File,
+    onProgress: (percent: number) => void
+  ): Promise<Attachment> {
+    const safeName = file.name.replace(/[^\w.\-]+/g, '_');
+    const fileRef = ref(this.storage, `chats/${chatId}/${Date.now()}_${safeName}`);
+    const task = uploadBytesResumable(fileRef, file, { contentType: file.type });
+
+    return new Promise((resolve, reject) => {
+      task.on(
+        'state_changed',
+        (s) => onProgress(s.totalBytes ? Math.round((s.bytesTransferred / s.totalBytes) * 100) : 0),
+        reject,
+        async () => {
+          try {
+            resolve({
+              type: file.type.startsWith('image/') ? 'image' : 'file',
+              fileUrl: await getDownloadURL(task.snapshot.ref),
+              fileName: file.name,
+              fileSize: file.size,
+              contentType: file.type || 'application/octet-stream',
+            });
+          } catch (e) {
+            reject(e);
+          }
+        }
+      );
     });
   }
 }
