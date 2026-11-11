@@ -27,7 +27,11 @@ import {
   MAX_ATTACHMENT_BYTES,
   Message,
   chatIdFor,
+  messagePreview,
 } from '../../services/chat';
+
+/** Quick reactions offered on every message. */
+export const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
 interface Contact extends ChatUser {
   chat?: ChatMeta;
@@ -44,7 +48,7 @@ const TYPING_IDLE_MS = 4000;
 
 @Component({
   selector: 'app-chat',
-  host: { '(document:keydown.escape)': 'viewer.set(null)' },
+  host: { '(document:keydown.escape)': 'onEscape()' },
   imports: [
     DatePipe,
     DecimalPipe,
@@ -70,6 +74,16 @@ export class Chat {
   emojiOpen = signal(false);
   /** Photo shown full-size in the in-page viewer (data URLs can't open in a new tab). */
   viewer = signal<string | null>(null);
+
+  readonly quickReactions = QUICK_REACTIONS;
+  /** Message the composer is replying to. */
+  replyingTo = signal<Message | null>(null);
+  /** Message being edited (the composer holds its text). */
+  editing = signal<Message | null>(null);
+  /** Message briefly highlighted after jumping to it from a reply quote. */
+  highlightId = signal<string | null>(null);
+  /** Chat + newest message id we last auto-scrolled for. */
+  private scrolledFor = '';
 
   /** Last Firestore error, shown as a banner instead of breaking the page. */
   loadError = signal('');
@@ -219,12 +233,16 @@ export class Chat {
   private typingIdleTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor() {
-    // Keep the conversation scrolled to the newest message.
+    // Scroll to the newest message when a chat opens, a new message arrives, or the other
+    // side starts typing — but not when a reaction or edit changes an older message
+    // (that would yank the view while reading history).
     afterRenderEffect(() => {
-      this.messages();
-      this.otherTyping();
+      const msgs = this.messages();
+      const key = `${this.activeChatId()}|${msgs.at(-1)?.id ?? ''}|${this.otherTyping()}`;
       const el = this.scroller()?.nativeElement;
-      if (el) el.scrollTop = el.scrollHeight;
+      if (!el || key === this.scrolledFor) return;
+      this.scrolledFor = key;
+      el.scrollTop = el.scrollHeight;
     });
 
     // Mark the open chat as read whenever it has unread messages for me and I can see it.
@@ -304,13 +322,126 @@ export class Chat {
     if (uid === this.selectedUid()) return;
     this.emojiOpen.set(false);
     this.stopTyping();
+    this.resetComposeMode();
     this.selectedUid.set(uid);
     this.draft.set('');
   }
 
   back() {
     this.stopTyping();
+    this.resetComposeMode();
     this.selectedUid.set(null);
+  }
+
+  onEscape() {
+    if (this.viewer()) this.viewer.set(null);
+    else if (this.emojiOpen()) this.emojiOpen.set(false);
+    else if (this.editing() || this.replyingTo()) this.cancelComposeMode();
+  }
+
+  // ---------- Reply / edit / delete / reactions ----------
+
+  /** Display name for a sender uid, "You" for me. */
+  senderName(uid: string) {
+    if (uid === this.me()?.uid) return 'You';
+    return this.users().find((u) => u.uid === uid)?.displayName ?? '';
+  }
+
+  preview(m: Message) {
+    return messagePreview(m);
+  }
+
+  canEdit(m: Message) {
+    return this.isMine(m) && !m.deleted && (m.type ?? 'text') !== 'file';
+  }
+
+  startReply(m: Message) {
+    this.editing.set(null);
+    this.replyingTo.set(m);
+    this.focusComposer();
+  }
+
+  startEdit(m: Message) {
+    if (!this.canEdit(m)) return;
+    this.replyingTo.set(null);
+    this.editing.set(m);
+    this.draft.set(m.text ?? '');
+    this.focusComposer(true);
+  }
+
+  cancelComposeMode() {
+    if (this.editing()) this.draft.set('');
+    this.resetComposeMode();
+  }
+
+  private resetComposeMode() {
+    this.editing.set(null);
+    this.replyingTo.set(null);
+  }
+
+  private focusComposer(selectEnd = false) {
+    setTimeout(() => {
+      const el = this.composerInput()?.nativeElement;
+      if (!el) return;
+      el.focus();
+      if (selectEnd) el.setSelectionRange(el.value.length, el.value.length);
+    });
+  }
+
+  private isLatest(m: Message) {
+    return this.messages().at(-1)?.id === m.id;
+  }
+
+  /** Reactions grouped by emoji, with whether I'm one of the reactors. */
+  reactionSummary(m: Message) {
+    const myUid = this.me()?.uid;
+    const groups = new Map<string, { emoji: string; count: number; mine: boolean }>();
+    for (const [uid, emoji] of Object.entries(m.reactions ?? {})) {
+      if (!emoji) continue;
+      const g = groups.get(emoji) ?? { emoji, count: 0, mine: false };
+      g.count++;
+      g.mine ||= uid === myUid;
+      groups.set(emoji, g);
+    }
+    return [...groups.values()];
+  }
+
+  /** Picking my current reaction again removes it; picking another one replaces it. */
+  toggleReaction(m: Message, emoji: string) {
+    const me = this.me();
+    const chatId = this.activeChatId();
+    if (!me || !chatId || m.deleted) return;
+    const next = m.reactions?.[me.uid] === emoji ? null : emoji;
+    this.chatService.react(chatId, m.id, me.uid, next).catch((e) => {
+      console.error('[Chat] reaction failed', e);
+      this.showError('الـ reaction ما اتحفظش', e);
+    });
+  }
+
+  deleteMessage(m: Message) {
+    const me = this.me();
+    const other = this.selectedUid();
+    if (!me || !other || !this.isMine(m) || m.deleted) return;
+    if (!confirm('تمسح الرسالة دي عند الكل؟')) return;
+    if (this.editing()?.id === m.id) this.cancelComposeMode();
+    this.chatService.deleteMessage(me.uid, other, m, this.isLatest(m)).catch((e) => {
+      console.error('[Chat] delete failed', e);
+      this.showError('الرسالة ما اتمسحتش', e);
+    });
+  }
+
+  /** Jumps to the original message of a reply quote and flashes it. */
+  scrollToMessage(id: string) {
+    const el = document.getElementById(`msg-${id}`);
+    if (!el) {
+      this.loadError.set('الرسالة الأصلية قديمة ومش ظاهرة في المحادثة');
+      return;
+    }
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    this.highlightId.set(id);
+    setTimeout(() => {
+      if (this.highlightId() === id) this.highlightId.set(null);
+    }, 1600);
   }
 
   isMine(m: Message) {
@@ -364,7 +495,27 @@ export class Chat {
     const me = this.me();
     const other = this.selectedUid();
     const text = this.draft().trim();
-    if (!me || !other || !text) return;
+    if (!me || !other) return;
+
+    const editing = this.editing();
+    if (editing) {
+      // An image keeps its photo, so its caption may be cleared; text needs content.
+      if (!text && (editing.type ?? 'text') === 'text') return;
+      this.stopTyping();
+      this.resetComposeMode();
+      this.draft.set('');
+      if (text === (editing.text ?? '').trim()) return; // nothing changed
+      this.chatService
+        .editMessage(me.uid, other, editing, text, this.isLatest(editing))
+        .catch((e) => {
+          console.error('[Chat] edit failed', e);
+          this.showError('التعديل ما اتحفظش', e);
+        });
+      return;
+    }
+
+    if (!text) return;
+    const replyTo = this.replyingTo();
 
     // The send batch also clears my typing flag.
     clearTimeout(this.typingIdleTimer);
@@ -372,9 +523,10 @@ export class Chat {
     this.typingSentAt = 0;
 
     this.draft.set('');
+    this.replyingTo.set(null);
     // Firestore shows the message right away from its local cache; the promise only
     // resolves once the server confirms, so don't block the composer on it.
-    this.chatService.send(me.uid, other, text).catch((e) => {
+    this.chatService.send(me.uid, other, text, undefined, replyTo).catch((e) => {
       console.error('[Chat] send failed', e);
       this.showError('الرسالة ما اتبعتتش', e);
       if (!this.draft()) this.draft.set(text); // give the text back so it isn't lost
@@ -404,20 +556,30 @@ export class Chat {
       return;
     }
 
+    // Picking a photo while editing starts a fresh message instead.
+    if (this.editing()) this.cancelComposeMode();
     const caption = this.draft().trim();
+    const replyTo = this.replyingTo();
     this.upload.set({ name: file.name, progress: 30 });
     try {
       const img = await compressImage(file, 1280);
       this.upload.set({ name: file.name, progress: 80 });
       this.draft.set('');
+      this.replyingTo.set(null);
       this.chatService
-        .send(me.uid, other, caption, {
-          type: 'image',
-          fileUrl: img.dataUrl,
-          fileName: file.name,
-          fileSize: img.bytes,
-          contentType: 'image/jpeg',
-        })
+        .send(
+          me.uid,
+          other,
+          caption,
+          {
+            type: 'image',
+            fileUrl: img.dataUrl,
+            fileName: file.name,
+            fileSize: img.bytes,
+            contentType: 'image/jpeg',
+          },
+          replyTo
+        )
         .catch((e) => {
           console.error('[Chat] sending image failed', e);
           this.showError('الصورة ما اتبعتتش', e);

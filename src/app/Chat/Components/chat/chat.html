@@ -134,12 +134,34 @@
       <div class="messages" #scroller>
         @for (m of messages(); track m.id) {
           <div
+            class="msg-row"
+            [id]="'msg-' + m.id"
+            [class.mine]="isMine(m)"
+            [class.flash]="highlightId() === m.id"
+            [class.being-edited]="editing()?.id === m.id"
+          >
+          <div class="msg-stack">
+          <div
             class="bubble"
             [class.mine]="isMine(m)"
-            [class.media]="m.type === 'image'"
-            [class.emoji-only]="(m.type ?? 'text') === 'text' && isEmojiOnly(m.text)"
+            [class.media]="m.type === 'image' && !m.deleted"
+            [class.deleted]="m.deleted"
+            [class.emoji-only]="!m.deleted && (m.type ?? 'text') === 'text' && isEmojiOnly(m.text)"
+            (dblclick)="toggleReaction(m, '❤️')"
           >
-            @switch (m.type) {
+            @if (m.deleted) {
+              <p class="deleted-text">
+                <mat-icon>block</mat-icon>
+                {{ isMine(m) ? 'You deleted this message' : 'This message was deleted' }}
+              </p>
+            }
+            @if (m.replyTo && !m.deleted) {
+              <button type="button" class="quote" (click)="scrollToMessage(m.replyTo.id)">
+                <strong>{{ senderName(m.replyTo.senderId) }}</strong>
+                <span dir="auto">{{ m.replyTo.text }}</span>
+              </button>
+            }
+            @switch (m.deleted ? null : m.type) {
               @case ('image') {
                 <button type="button" class="img-open" (click)="viewer.set(m.fileUrl ?? null)">
                   <img class="attachment-img" [src]="m.fileUrl" [alt]="m.fileName" loading="lazy" />
@@ -156,12 +178,15 @@
                 </a>
               }
             }
-            @if (m.text) {
+            @if (m.text && !m.deleted) {
               <p>{{ m.text }}</p>
             }
             <div class="meta">
+              @if (m.editedAt && !m.deleted) {
+                <span class="edited">edited</span>
+              }
               <time>{{ m.createdAt ? (m.createdAt.toDate() | date: 'shortTime') : '' }}</time>
-              @if (isMine(m)) {
+              @if (isMine(m) && !m.deleted) {
                 @if (!m.createdAt) {
                   <mat-icon class="tick" title="Sending">schedule</mat-icon>
                 } @else if (isSeen(m)) {
@@ -171,6 +196,57 @@
                 }
               }
             </div>
+          </div>
+          @if (!m.deleted) {
+            @if (reactionSummary(m); as reactions) {
+              @if (reactions.length) {
+                <div class="reactions">
+                  @for (r of reactions; track r.emoji) {
+                    <button
+                      type="button"
+                      class="reaction"
+                      [class.mine]="r.mine"
+                      (click)="toggleReaction(m, r.emoji)"
+                      [title]="r.mine ? 'Remove your reaction' : 'React ' + r.emoji"
+                    >
+                      {{ r.emoji }}
+                      @if (r.count > 1) {
+                        <span>{{ r.count }}</span>
+                      }
+                    </button>
+                  }
+                </div>
+              }
+            }
+          }
+          </div>
+          @if (!m.deleted && m.createdAt) {
+            <div class="msg-actions">
+              <button
+                mat-icon-button
+                [matMenuTriggerFor]="reactMenu"
+                [matMenuTriggerData]="{ m: m }"
+                aria-label="React"
+                title="React"
+              >
+                <mat-icon>add_reaction</mat-icon>
+              </button>
+              <button mat-icon-button (click)="startReply(m)" aria-label="Reply" title="Reply">
+                <mat-icon>reply</mat-icon>
+              </button>
+              @if (isMine(m)) {
+                <button
+                  mat-icon-button
+                  [matMenuTriggerFor]="moreMenu"
+                  [matMenuTriggerData]="{ m: m }"
+                  aria-label="More"
+                  title="More"
+                >
+                  <mat-icon>more_vert</mat-icon>
+                </button>
+              }
+            </div>
+          }
           </div>
         } @empty {
           <div class="no-messages">Say hi to {{ other.displayName }} 👋</div>
@@ -188,6 +264,24 @@
           <span class="name">{{ u.name }}</span>
           <span>{{ u.progress }}%</span>
           <div class="track"><div class="fill" [style.width.%]="u.progress"></div></div>
+        </div>
+      }
+
+      @if (replyingTo() || editing()) {
+        <div class="compose-mode">
+          <mat-icon>{{ editing() ? 'edit' : 'reply' }}</mat-icon>
+          <div class="compose-mode-text">
+            @if (editing(); as e) {
+              <strong>Editing message</strong>
+              <span dir="auto">{{ preview(e) }}</span>
+            } @else if (replyingTo(); as r) {
+              <strong>Replying to {{ senderName(r.senderId) }}</strong>
+              <span dir="auto">{{ preview(r) }}</span>
+            }
+          </div>
+          <button mat-icon-button type="button" (click)="cancelComposeMode()" aria-label="Cancel">
+            <mat-icon>close</mat-icon>
+          </button>
         </div>
       }
 
@@ -232,8 +326,13 @@
           (input)="onInput($any($event.target).value)"
           (keydown)="onKeydown($event)"
         ></textarea>
-        <button mat-icon-button type="submit" [disabled]="!draft().trim()" aria-label="Send">
-          <mat-icon>send</mat-icon>
+        <button
+          mat-icon-button
+          type="submit"
+          [disabled]="!draft().trim() && editing()?.type !== 'image'"
+          [attr.aria-label]="editing() ? 'Save edit' : 'Send'"
+        >
+          <mat-icon>{{ editing() ? 'check' : 'send' }}</mat-icon>
         </button>
       </form>
     } @else {
@@ -258,3 +357,33 @@
     </div>
   </div>
 }
+
+<mat-menu #reactMenu="matMenu" class="react-menu" yPosition="above">
+  <ng-template matMenuContent let-m="m">
+    <div class="react-bar">
+      @for (e of quickReactions; track e) {
+        <button
+          type="button"
+          [class.mine]="m.reactions?.[me()?.uid ?? ''] === e"
+          (click)="toggleReaction(m, e)"
+          [attr.aria-label]="'React ' + e"
+        >{{ e }}</button>
+      }
+    </div>
+  </ng-template>
+</mat-menu>
+
+<mat-menu #moreMenu="matMenu" xPosition="before">
+  <ng-template matMenuContent let-m="m">
+    @if (canEdit(m)) {
+      <button mat-menu-item (click)="startEdit(m)">
+        <mat-icon>edit</mat-icon>
+        <span>Edit</span>
+      </button>
+    }
+    <button mat-menu-item class="danger" (click)="deleteMessage(m)">
+      <mat-icon>delete</mat-icon>
+      <span>Delete for everyone</span>
+    </button>
+  </ng-template>
+</mat-menu>

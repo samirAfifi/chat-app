@@ -28,12 +28,37 @@ service cloud.firestore {
       allow delete: if false;
 
       match /messages/{messageId} {
+        function changed() {
+          return request.resource.data.diff(resource.data).affectedKeys();
+        }
+
+        // Anyone in the chat may set/clear only their own reaction.
+        function isOwnReaction() {
+          return changed().hasOnly(['reactions'])
+            && request.resource.data.reactions
+                 .diff(resource.data.get('reactions', {}))
+                 .affectedKeys().hasOnly([request.auth.uid]);
+        }
+
+        // The sender may edit the text or delete (blank out) their own message.
+        function isOwnEditOrDelete() {
+          return resource.data.senderId == request.auth.uid
+            && changed().hasOnly(['text', 'editedAt', 'deleted', 'type', 'fileUrl',
+                                  'fileName', 'fileSize', 'contentType', 'replyTo'])
+            && request.resource.data.senderId == resource.data.senderId
+            && request.resource.data.text is string
+            && request.resource.data.text.size() <= 4000;
+        }
+
         allow read: if inChat();
         allow create: if inChat()
           && request.resource.data.senderId == request.auth.uid
           && request.resource.data.text is string
           && request.resource.data.text.size() <= 4000;
-        allow update, delete: if false;
+        allow update: if inChat()
+          && resource.data.get('deleted', false) != true
+          && (isOwnReaction() || isOwnEditOrDelete());
+        allow delete: if false;
       }
     }
   }

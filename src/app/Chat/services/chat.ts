@@ -4,7 +4,9 @@ import {
   Timestamp,
   collection,
   collectionData,
+  deleteField,
   doc,
+  updateDoc,
   increment,
   limitToLast,
   orderBy,
@@ -53,9 +55,35 @@ export interface Message {
   fileName?: string;
   fileSize?: number;
   contentType?: string;
+  /** Snapshot of the message this one replies to (kept even if the original changes). */
+  replyTo?: ReplyRef;
+  /** One reaction emoji per member uid. */
+  reactions?: Record<string, string>;
+  editedAt?: Timestamp | null;
+  /** "Deleted for everyone": content is blanked, the bubble shows a placeholder. */
+  deleted?: boolean;
   /** null while the server timestamp is still pending */
   createdAt: Timestamp | null;
 }
+
+export interface ReplyRef {
+  id: string;
+  senderId: string;
+  type: MessageType;
+  /** Short preview of the original text (or caption). */
+  text: string;
+}
+
+/** One-line preview of a message for the contact list and reply quotes. */
+export function messagePreview(m: Pick<Message, 'type' | 'text' | 'fileName' | 'deleted'>) {
+  if (m.deleted) return '🚫 Message deleted';
+  const text = (m.text ?? '').trim();
+  if (m.type === 'image') return `📷 ${text || 'Photo'}`;
+  if (m.type === 'file') return `📎 ${m.fileName ?? 'File'}`;
+  return text;
+}
+
+const REPLY_SNIPPET_MAX = 120;
 
 export interface Attachment {
   type: 'image' | 'file';
@@ -119,18 +147,32 @@ export class ChatService {
    * Sends a text and/or attachment. The message and the chat summary are written in one
    * batch so the contact list never shows a "last message" that doesn't exist.
    */
-  async send(senderId: string, receiverId: string, text: string, attachment?: Attachment) {
+  async send(
+    senderId: string,
+    receiverId: string,
+    text: string,
+    attachment?: Attachment,
+    replyTo?: Message | null
+  ) {
     const body = text.trim();
     if (!body && !attachment) return;
 
     const chatRef = doc(this.firestore, 'chats', chatIdFor(senderId, receiverId));
     const msgRef = doc(collection(chatRef, 'messages'));
 
-    const preview = attachment
-      ? attachment.type === 'image'
-        ? `📷 ${body || 'Photo'}`
-        : `📎 ${attachment.fileName}`
-      : body;
+    const preview = messagePreview({
+      type: attachment?.type ?? 'text',
+      text: body,
+      fileName: attachment?.fileName,
+    });
+    const reply: ReplyRef | null = replyTo
+      ? {
+          id: replyTo.id,
+          senderId: replyTo.senderId,
+          type: replyTo.type ?? 'text',
+          text: messagePreview(replyTo).slice(0, REPLY_SNIPPET_MAX),
+        }
+      : null;
 
     const batch = writeBatch(this.firestore);
     batch.set(
@@ -150,8 +192,62 @@ export class ChatService {
       type: attachment?.type ?? 'text',
       text: body,
       ...(attachment ?? {}),
+      ...(reply ? { replyTo: reply } : {}),
       createdAt: serverTimestamp(),
     });
+    await batch.commit();
+  }
+
+  /** Sets (or with null, removes) my reaction on a message. */
+  react(chatId: string, messageId: string, uid: string, emoji: string | null) {
+    return updateDoc(doc(this.firestore, 'chats', chatId, 'messages', messageId), {
+      [`reactions.${uid}`]: emoji ?? deleteField(),
+    });
+  }
+
+  /**
+   * Edits my message's text. When it's the newest message in the chat, the contact
+   * list preview is updated in the same batch.
+   */
+  async editMessage(uid: string, otherUid: string, m: Message, text: string, isLatest: boolean) {
+    const chatId = chatIdFor(uid, otherUid);
+    const body = text.trim();
+    const batch = writeBatch(this.firestore);
+    batch.update(doc(this.firestore, 'chats', chatId, 'messages', m.id), {
+      text: body,
+      editedAt: serverTimestamp(),
+    });
+    if (isLatest) {
+      batch.set(
+        doc(this.firestore, 'chats', chatId),
+        { members: membersOf(uid, otherUid), lastMessage: messagePreview({ ...m, text: body }) },
+        { merge: true }
+      );
+    }
+    await batch.commit();
+  }
+
+  /** "Delete for everyone": blanks the content but keeps the message slot in the thread. */
+  async deleteMessage(uid: string, otherUid: string, m: Message, isLatest: boolean) {
+    const chatId = chatIdFor(uid, otherUid);
+    const batch = writeBatch(this.firestore);
+    batch.update(doc(this.firestore, 'chats', chatId, 'messages', m.id), {
+      deleted: true,
+      type: 'text',
+      text: '',
+      fileUrl: deleteField(),
+      fileName: deleteField(),
+      fileSize: deleteField(),
+      contentType: deleteField(),
+      replyTo: deleteField(),
+    });
+    if (isLatest) {
+      batch.set(
+        doc(this.firestore, 'chats', chatId),
+        { members: membersOf(uid, otherUid), lastMessage: messagePreview({ ...m, deleted: true }) },
+        { merge: true }
+      );
+    }
     await batch.commit();
   }
 

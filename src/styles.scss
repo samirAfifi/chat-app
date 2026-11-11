@@ -650,3 +650,180 @@ body {
     a, button { color: #fff; }
   }
 }
+
+/* ---------- Message actions: reply, reactions, edit, delete ---------- */
+.msg-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  max-width: min(78%, 620px);
+  align-self: flex-start;
+  border-radius: 20px;
+  transition: background-color 0.3s;
+
+  &.mine { align-self: flex-end; flex-direction: row-reverse; }
+  &.flash { background: color-mix(in srgb, var(--mat-sys-primary) 18%, transparent); }
+  &.being-edited .bubble { outline: 2px solid var(--mat-sys-tertiary); outline-offset: 2px; }
+
+  .bubble { max-width: 100%; }
+}
+
+.msg-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+
+  .mine > & { align-items: flex-end; }
+}
+
+.msg-actions {
+  display: flex;
+  flex: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+  color: var(--mat-sys-on-surface-variant);
+
+  button { --mat-icon-button-state-layer-size: 32px; width: 32px; height: 32px; padding: 4px; }
+  mat-icon { font-size: 18px; width: 18px; height: 18px; }
+}
+
+.msg-row:hover .msg-actions,
+.msg-row:focus-within .msg-actions { opacity: 1; }
+
+/* Touch screens have no hover: keep the actions faintly visible. */
+@media (hover: none) {
+  .msg-actions { opacity: 0.55; }
+}
+
+.quote {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  min-width: 140px;
+  margin: 0 0 6px;
+  padding: 6px 10px;
+  border: 0;
+  border-left: 3px solid var(--mat-sys-primary);
+  border-radius: 8px;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+
+  strong { font-size: 12px; }
+  span {
+    font-size: 13px;
+    opacity: 0.85;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 420px;
+  }
+
+  .bubble.mine & { border-left-color: var(--mat-sys-on-primary); }
+  .bubble.media & { margin: 4px 4px 6px; width: calc(100% - 8px); }
+}
+
+.bubble.deleted {
+  background: transparent !important;
+  color: var(--mat-sys-on-surface-variant) !important;
+  border: 1px dashed var(--mat-sys-outline-variant);
+
+  .deleted-text {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-style: italic;
+    font-size: 14px;
+  }
+  .deleted-text mat-icon { font-size: 16px; width: 16px; height: 16px; }
+}
+
+.meta .edited { font-style: italic; margin-right: 2px; }
+
+.reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: -6px;
+  padding: 0 8px;
+  position: relative;
+  z-index: 1;
+}
+
+.reaction {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 24px;
+  padding: 0 7px;
+  border: 1px solid var(--mat-sys-outline-variant);
+  border-radius: 12px;
+  background: var(--mat-sys-surface-container-high);
+  color: var(--mat-sys-on-surface);
+  font-size: 14px;
+  cursor: pointer;
+
+  span { font-size: 11px; font-weight: 600; }
+  &.mine {
+    border-color: var(--mat-sys-primary);
+    background: var(--mat-sys-primary-container);
+  }
+}
+
+.react-menu.mat-mdc-menu-panel { min-width: 0; max-width: none; border-radius: 28px; }
+.react-menu .mat-mdc-menu-content { padding: 4px; }
+
+.react-bar {
+  display: flex;
+  gap: 2px;
+
+  button {
+    width: 40px;
+    height: 40px;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    font-size: 24px;
+    cursor: pointer;
+    transition: transform 0.1s;
+
+    &:hover { transform: scale(1.25); }
+    &.mine { background: var(--mat-sys-secondary-container); }
+  }
+}
+
+.mat-mdc-menu-item.danger,
+.mat-mdc-menu-item.danger mat-icon { color: var(--mat-sys-error); }
+
+.compose-mode {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px 6px 16px;
+  border-top: 1px solid var(--mat-sys-outline-variant);
+  background: var(--mat-sys-surface-container-low);
+
+  > mat-icon { color: var(--mat-sys-primary); }
+}
+
+.compose-mode-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding-left: 10px;
+  border-left: 3px solid var(--mat-sys-primary);
+
+  strong { font-size: 13px; color: var(--mat-sys-primary); }
+  span {
+    font-size: 13px;
+    color: var(--mat-sys-on-surface-variant);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
